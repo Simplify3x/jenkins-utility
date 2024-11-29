@@ -1,0 +1,2 @@
+_extends: .github
+tag-template: jenkinsutility-$NEXT_MINOR_VERSION
