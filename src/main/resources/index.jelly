@@ -1,0 +1,26 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:stapler="jelly:stapler" xmlns:f="/lib/form">
+<f:section title="Hello World Plugin Configuration">
+        <!-- Existing fields for name and useFrench -->
+        <f:entry title="Your Name" field="name">
+            <f:textbox />
+        </f:entry>
+        <f:entry title="Use French?" field="useFrench">
+            <f:checkbox />
+        </f:entry>
+
+        <!-- New fields for API URL, API Key, Pipeline ID, and Threshold -->
+        <f:entry title="API URL" field="apiUrl">
+            <f:textbox />
+        </f:entry>
+        <f:entry title="API Key" field="apiKey">
+            <f:textbox />
+        </f:entry>
+        <f:entry title="Pipeline ID" field="pipelineId">
+            <f:textbox />
+        </f:entry>
+        <f:entry title="Threshold" field="threshold">
+            <f:textbox />
+        </f:entry>
+    </f:section>
+</j:jelly>
