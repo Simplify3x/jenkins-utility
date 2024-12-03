@@ -1,4 +1,4 @@
-# Jenkins Pipeline Executor Plugin
+# SimplifyQA-Pipeline-Executor-Plugin
 
 ## Overview
 
