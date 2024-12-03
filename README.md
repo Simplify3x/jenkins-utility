@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Jenkins Pipeline Executor Plugin is designed to trigger and manage the execution of a pipeline through a third-party API. It interacts with the pipeline system by initiating test executions via the start API, capturing the status periodically, and automatically stopping the execution when a specified threshold is reached.
+The SimplifyQA Pipeline Executor Plugin is designed to trigger and manage the execution of a pipeline through a third-party API. It interacts with the pipeline system by initiating test executions via the start API, capturing the status periodically, and automatically stopping the execution when a specified threshold is reached.
 
 ## Key Features:
 
