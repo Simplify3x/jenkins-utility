@@ -1,7 +1,11 @@
 package io.jenkins.plugins.sample.model;
 
-public class Platform {
+public class Platform implements IPlatform {
     private String id;
+
+    public Platform() {
+    }
+
     private String name;
     private String technologyType;
     private String type;

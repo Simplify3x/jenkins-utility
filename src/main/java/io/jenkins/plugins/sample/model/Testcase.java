@@ -3,7 +3,7 @@ package io.jenkins.plugins.sample.model;
 import java.util.List;
 import java.util.Map;
 
-public class Testcase {
+public class Testcase implements ITestcase {
     private int testcaseId;
     private String testcaseName;
     private String testcaseDesc;
@@ -19,7 +19,9 @@ public class Testcase {
     private String agentStartTime; // Optional field
     private String agentEndTime; // Optional field
     private String executionDuration; // Optional field
-
+    public Testcase() {
+        // Optionally initialize fields if necessary
+    }
     public Testcase(
             int testcaseId,
             String testcaseName,
@@ -52,6 +54,8 @@ public class Testcase {
         this.agentEndTime = agentEndTime;
         this.executionDuration = executionDuration;
     }
+
+    public Testcase(List<Testcase> testcases) {}
 
     public int getTestcaseId() {
         return testcaseId;

@@ -2,24 +2,24 @@ package io.jenkins.plugins.sample.model;
 
 public class ExecutionStatus {
     private final String status;
-    private final double executedPercent;
-    private final double failedPercent;
+    String testcase;
 
-    public ExecutionStatus(String status, double executedPercent, double failedPercent) {
+
+    public ExecutionStatus(String status,String testcase) {
         this.status = status;
-        this.executedPercent = executedPercent;
-        this.failedPercent = failedPercent;
+        this.testcase=testcase;
+
     }
 
     public String getStatus() {
         return status;
     }
 
-    public double getExecutedPercent() {
-        return executedPercent;
+    public String getTestcase() {
+        return testcase;
     }
 
-    public double getFailedPercent() {
-        return failedPercent;
+    public void setTestcase(String testcase) {
+        this.testcase = testcase;
     }
 }

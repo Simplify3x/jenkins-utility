@@ -1,5 +1,7 @@
 package io.jenkins.plugins.sample;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import hudson.EnvVars;
 import hudson.Extension;
 import hudson.FilePath;
@@ -11,12 +13,14 @@ import hudson.model.TaskListener;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.Builder;
 import hudson.util.FormValidation;
-import io.jenkins.plugins.sample.model.ExecutionStatus;
+import io.jenkins.plugins.sample.model.*;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.List;
+import java.util.logging.Logger;
 import javax.servlet.ServletException;
 import jenkins.tasks.SimpleBuildStep;
 import org.jenkinsci.Symbol;
@@ -89,127 +93,232 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
         this.useFrench = useFrench;
     }
 
-//        @Override
-//        public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
-//                throws InterruptedException, IOException {
-//            String apiUrl = env.get("API URL");
-//            String apiKey = env.get("API Key");
-//            String pipelineId = env.get("Pipeline ID");
-//
-
-
-
-
-//            listener.getLogger().println("API URL: " + apiUrl);
-//            listener.getLogger().println("API Key: " + apiKey);
-//            listener.getLogger().println("Pipeline ID: " + pipelineId);
-//
-//            // Start Execution
-//            ExecutionResponse startResponse = startPipelineExecution(apiUrl, apiKey, pipelineId, listener);
-//            if (startResponse != null) {
-//                String projectId = startResponse.getProjectId();
-//                String execId = startResponse.getExecutionId();
-//
-//                listener.getLogger().println("Pipeline execution started successfully.");
-//                listener.getLogger().println("Project ID: " + projectId);
-//                listener.getLogger().println("Execution ID: " + execId);
-//
-//                // Check Status
-//                if (checkPipelineStatus(apiUrl, apiKey, projectId, execId, listener)) {
-//                    listener.getLogger().println("Pipeline execution status retrieved successfully.");
-//                } else {
-//                    listener.getLogger().println("Failed to retrieve pipeline execution status.");
-//                }
-//            } else {
-//                listener.getLogger().println("Failed to start pipeline execution.");
-//            }
-//        }
-    @Override
     public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
             throws InterruptedException, IOException {
         String apiUrl = env.get("API URL");
         String apiKey = env.get("API Key");
         String pipelineId = env.get("Pipeline ID");
-        double threshold = Double.parseDouble(env.getOrDefault("THRESHOLD", "100")); // Default to 100 if not provided
-        //    boolean verbose = Boolean.parseBoolean(env.getOrDefault("VERBOSE", "false"));
+        double threshold = Double.parseDouble(env.getOrDefault("Threshold", "100")); // Default to 100 if not provided
 
-        listener.getLogger()
-                .println(
-                        "************************************** SIMPLIFYQA PIPELINE EXECUTOR **************************************");
+        listener.getLogger().println("********** SIMPLIFYQA PIPELINE EXECUTOR **********");
         listener.getLogger().println("Pipeline Execution Started...");
         listener.getLogger().println("API URL: " + apiUrl);
         listener.getLogger().println("Pipeline ID: " + pipelineId);
 
-        // Start Execution
-        ExecutionResponse startResponse = startPipelineExecution(apiUrl, apiKey, pipelineId, listener);
-        if (startResponse == null) {
+        Execution response = startPipelineExecution(apiUrl, apiKey, pipelineId, listener);
+        if (response == null) {
             listener.getLogger().println("Failed to start execution.");
             run.setResult(Result.FAILURE);
             return;
         }
 
-        String projectId = startResponse.getProjectId();
-        String execId = startResponse.getExecutionId();
-        listener.getLogger().println("Execution Started - Project ID: " + projectId + ", Execution ID: " + execId);
+        Execution execObj = new Execution((Execution) response, threshold);
+
+        listener.getLogger().println("Execution started with status: " + execObj.getStatus());
+        printStatus(execObj);
 
         try {
-            ExecutionStatus currentStatus;
-            ExecutionStatus previousStatus = null;
+            Execution temp = null;
+            while (execObj.getStatus().equalsIgnoreCase("INPROGRESS")
+                    && execObj.getMetadata().getFailedPercent()
+                            <= execObj.getMetadata().getThreshold()) {
 
-            do {
-                // Fetch Execution Status
-                currentStatus = fetchPipelineStatus(apiUrl, apiKey, projectId, execId, listener);
-                if (currentStatus == null) {
+                Execution statusResponse =
+                        fetchPipelineStatus(apiUrl, apiKey, execObj.getProjectId(), execObj.getId(), listener);
+
+
+                if (statusResponse == null) {
                     listener.getLogger().println("Failed to fetch execution status.");
                     run.setResult(Result.FAILURE);
                     return;
                 }
+                execObj=new Execution(statusResponse,threshold);
 
-                // Print progress if updated
-                if (previousStatus == null
-                        || previousStatus.getExecutedPercent() < currentStatus.getExecutedPercent()) {
-                    listener.getLogger().println("Progress: " + currentStatus.getExecutedPercent() + "%");
+                //                execObj.update(statusResponse); // Update execution object with latest status
+                if (temp == null
+                        || temp.getMetadata().getExecutedPercent()
+                                < execObj.getMetadata().getExecutedPercent()) {
+                    printStatus(execObj);
                 }
 
-                // Check threshold
-                if (currentStatus.getFailedPercent() >= threshold) {
-                    listener.getLogger().println("Threshold reached (" + threshold + "%). Stopping execution...");
-                    stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
-                    run.setResult(Result.FAILURE);
-                    return;
-                }
-
-                previousStatus = currentStatus;
+                temp = execObj;
                 Thread.sleep(5000); // Delay for status polling
+            }
 
-            } while ("INPROGRESS".equalsIgnoreCase(currentStatus.getStatus()));
-
-            // Handle final status
-            if ("FAILED".equalsIgnoreCase(currentStatus.getStatus())) {
+            if (execObj.getMetadata().getFailedPercent()
+                    >= execObj.getMetadata().getThreshold()) {
+                listener.getLogger().println("Threshold reached (" + threshold + "%). Stopping execution...");
+                stopPipelineExecution(apiUrl, apiKey, execObj.getProjectId(), execObj.getId(), listener);
+                run.setResult(Result.FAILURE);
+            } else if ("FAILED".equalsIgnoreCase(execObj.getStatus())) {
                 listener.getLogger().println("Execution failed. Stopping pipeline...");
-                stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
+                stopPipelineExecution(apiUrl, apiKey, execObj.getProjectId(), execObj.getId(), listener);
                 run.setResult(Result.FAILURE);
             } else {
                 listener.getLogger().println("Execution completed successfully.");
                 run.setResult(Result.SUCCESS);
             }
-
         } catch (Exception e) {
             listener.getLogger().println("Error occurred: " + e.getMessage());
-            stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
+            stopPipelineExecution(apiUrl, apiKey, execObj.getProjectId(), execObj.getId(), listener);
             run.setResult(Result.FAILURE);
         }
     }
 
-    private void stopPipelineExecution(
-            String apiUrl, String apiKey, String projectId, String execId, TaskListener listener) {
+    //    @Override
+    //    public void perform(Run<?, ?> run, FilePath workspace, EnvVars env, Launcher launcher, TaskListener listener)
+    //            throws InterruptedException, IOException {
+    //        String apiUrl = env.get("API URL");
+    //        String apiKey = env.get("API Key");
+    //        String pipelineId = env.get("Pipeline ID");
+    //        double threshold = Double.parseDouble(env.getOrDefault("THRESHOLD", "100")); // Default to 100 if not
+    // provided
+    //        //    boolean verbose = Boolean.parseBoolean(env.getOrDefault("VERBOSE", "false"));
+    //
+    //        listener.getLogger()
+    //                .println(
+    //                        "************************************** SIMPLIFYQA PIPELINE EXECUTOR
+    // **************************************");
+    //        listener.getLogger().println("Pipeline Execution Started...");
+    //        listener.getLogger().println("API URL: " + apiUrl);
+    //        listener.getLogger().println("Pipeline ID: " + pipelineId);
+    //
+    //        // Start Execution
+    //        ExecutionResponse startResponse = startPipelineExecution(apiUrl, apiKey, pipelineId, listener);
+    //        if (startResponse == null) {
+    //            listener.getLogger().println("Failed to start execution.");
+    //            run.setResult(Result.FAILURE);
+    //            return;
+    //        }
+    //
+    //        String projectId = startResponse.getProjectId();
+    //        String execId = startResponse.getExecutionId();
+    //        listener.getLogger().println("Execution Started - Project ID: " + projectId + ", Execution ID: " +
+    // execId);
+    //
+    //        try {
+    //            ExecutionStatus currentStatus;
+    //            ExecutionStatus previousStatus = null;
+    //
+    //            do {
+    //                // Fetch Execution Status
+    //                currentStatus = fetchPipelineStatus(apiUrl, apiKey, projectId, execId, listener);
+    //                if (currentStatus == null) {
+    //                    listener.getLogger().println("Failed to fetch execution status.");
+    //                    run.setResult(Result.FAILURE);
+    //                    return;
+    //                }
+    //
+    //                // Print progress if updated
+    //                if (previousStatus == null
+    //                        || previousStatus.getExecutedPercent() < currentStatus.getExecutedPercent()) {
+    //                    listener.getLogger().println("Progress: " + currentStatus.getExecutedPercent() + "%");
+    //                }
+    //
+    //                // Check threshold
+    //                if (currentStatus.getFailedPercent() >= threshold) {
+    //                    listener.getLogger().println("Threshold reached (" + threshold + "%). Stopping execution...");
+    //                    stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
+    //                    run.setResult(Result.FAILURE);
+    //                    return;
+    //                }
+    //
+    //                previousStatus = currentStatus;
+    //                Thread.sleep(5000); // Delay for status polling
+    //
+    //            } while ("INPROGRESS".equalsIgnoreCase(currentStatus.getStatus()));
+    //
+    //            // Handle final status
+    //            if ("FAILED".equalsIgnoreCase(currentStatus.getStatus())) {
+    //                listener.getLogger().println("Execution failed. Stopping pipeline...");
+    //                stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
+    //                run.setResult(Result.FAILURE);
+    //            } else {
+    //                listener.getLogger().println("Execution completed successfully.");
+    //                run.setResult(Result.SUCCESS);
+    //            }
+    //
+    //        } catch (Exception e) {
+    //            listener.getLogger().println("Error occurred: " + e.getMessage());
+    //            stopPipelineExecution(apiUrl, apiKey, projectId, execId, listener);
+    //            run.setResult(Result.FAILURE);
+    //        }
+    //    }
+    public static void printStatus(Execution execObj) {
+        Logger logger = Logger.getLogger(Execution.class.getName());
+        try {
+            logger.info(
+                    "**************************************  EXECUTION STATUS  **************************************%n");
+
+            logger.info(String.format(
+                    "EXECUTION PERCENTAGE: %.2f %%\t| EXECUTED %d of %d items.",
+                    execObj.getMetadata().getExecutedPercent(),
+                    execObj.getMetadata().getExecutedCount(),
+                    execObj.getMetadata().getTotalCount()));
+
+            logger.info(String.format(
+                    "THRESHOLD PERCENTAGE: %.2f %%\t| REACHED %.2f %% of %.2f %% %n",
+                    execObj.getMetadata().getThreshold(),
+                    execObj.getMetadata().getFailedPercent(),
+                    execObj.getMetadata().getThreshold()));
+
+            logger.info(String.format(
+                    "PASSED PERCENTAGE: %.2f %%\t| PASSED %d of %d items.",
+                    execObj.getMetadata().getPassedPercent(),
+                    execObj.getMetadata().getPassedCount(),
+                    execObj.getMetadata().getTotalCount()));
+
+            logger.info(String.format(
+                    "FAILED PERCENTAGE: %.2f %%\t| FAILED %d of %d items.",
+                    execObj.getMetadata().getFailedPercent(),
+                    execObj.getMetadata().getFailedCount(),
+                    execObj.getMetadata().getTotalCount()));
+
+            logger.info(String.format(
+                    "SKIPPED PERCENTAGE: %.2f %%\t| SKIPPED %d of %d items.%n",
+                    execObj.getMetadata().getSkippedPercent(),
+                    execObj.getMetadata().getSkippedCount(),
+                    execObj.getMetadata().getTotalCount()));
+
+            logger.info(String.format(
+                    "EXEC ID: %s \t| EXECUTION STATUS: %s \t| EXECUTION RESULT: %s",
+                    execObj.getCode(),
+                    execObj.getStatus() != null ? execObj.getStatus() : "N/A",
+                    execObj.getResult() != null ? execObj.getResult() : "N/A"));
+
+            logger.info(String.format(
+                    "PARENT ID: %s \t| PARENT NAME: %s \t| PARENT TYPE: %s%n",
+                    execObj.getExecutionTypeCode() != null ? execObj.getExecutionTypeCode() : "N/A",
+                    execObj.getExecutionTypeName() != null ? execObj.getExecutionTypeName() : "N/A",
+                    execObj.getType() != null ? execObj.getType() : "N/A"));
+
+            List<Testcase> testcases = execObj.getTestcases();
+            if (testcases != null && !testcases.isEmpty()) {
+                for (Testcase testcase : testcases) {
+                    logger.info(String.format(
+                            "TESTCASE ID: %d | TESTCASE STATUS: %s | TESTCASE NAME: %s",
+                            testcase.getTestcaseId(),
+                            testcase.getStatus() != null ? testcase.getStatus() : "N/A",
+                            testcase.getTestcaseName() != null ? testcase.getTestcaseName() : "N/A"));
+                }
+            }
+
+            logger.info(
+                    "************************************************************************************************%n");
+        } catch (Exception e) {
+            logger.severe("Error caused while printing execution status!!!");
+            e.printStackTrace();
+        }
+    }
+
+    private void stopPipelineExecution(String apiUrl, String apiKey, int projectId, int execId, TaskListener listener) {
         String urlStr = apiUrl + "/pl/exec/stop/" + projectId + "/" + execId;
         listener.getLogger().println("Stopping execution at: " + urlStr);
         makeApiCall("POST", urlStr, apiKey, listener);
     }
 
-    private ExecutionStatus fetchPipelineStatus(
-            String apiUrl, String apiKey, String projectId, String execId, TaskListener listener) {
+    private Execution fetchPipelineStatus(
+            String apiUrl, String apiKey, int projectId, int execId, TaskListener listener) {
         String urlStr = apiUrl + "/pl/exec/status/" + projectId + "/" + execId;
         listener.getLogger().println("Fetching status from: " + urlStr);
         try {
@@ -230,14 +339,19 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
                 in.close();
 
                 JSONObject jsonResponse = new JSONObject(response.toString());
-                double executedPercent = jsonResponse.optDouble("executedPercent", 0.0);
-                double failedPercent = jsonResponse.optDouble("failedPercent", 0.0);
-                String status=jsonResponse.getString("status");
+//                double executedPercent = jsonResponse.optDouble("executedPercent");
+//                double failedPercent = jsonResponse.optDouble("failedPercent");
+//                String testcases=jsonResponse.getString("testcases");
+                String status = jsonResponse.getString("status");
 
                 listener.getLogger().println("Status: " + status);
-                listener.getLogger().println("Executed Percent: " + executedPercent + "%");
-                listener.getLogger().println("Failed Percent: " + failedPercent + "%");
-                return new ExecutionStatus(status, executedPercent, failedPercent);
+//                listener.getLogger().println("Executed Percent: " + executedPercent + "%");
+//                listener.getLogger().println("Failed Percent: " + failedPercent + "%");
+//                return new ExecutionStatus(status,testcases);
+                IExecution executionData = createExecutionFromApiResponse(response.toString());
+
+                // Return ExecutionResponse with Execution object as the first parameter
+                return new Execution(executionData) {};
             } else {
                 listener.getLogger().println("Failed to fetch status, response code: " + responseCode);
                 return null;
@@ -249,8 +363,7 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
         }
     }
 
-    private ExecutionResponse startPipelineExecution(
-            String apiUrl, String apiKey, String pipelineId, TaskListener listener) {
+    private Execution startPipelineExecution(String apiUrl, String apiKey, String pipelineId, TaskListener listener) {
         String urlStr = apiUrl + "/pl/exec/start/" + pipelineId;
         try {
             URL url = new URL(urlStr);
@@ -289,7 +402,7 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
                         throw new JSONException("Unexpected type for projectId");
                     }
 
-                    //                    String execId = jsonResponse.getString("id");
+                    // String execId = jsonResponse.getString("id");
                     Object execIdObj = jsonResponse.get("id");
                     String execId;
                     if (execIdObj instanceof String) {
@@ -302,7 +415,12 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
                     listener.getLogger()
                             .println("API call successful. Project ID: " + projectId + ", Execution ID: " + execId);
 
-                    return new ExecutionResponse(projectId, execId);
+                    //                    Execution execution = new Execution(projectId, execId);
+                    IExecution executionData = createExecutionFromApiResponse(responseBody);
+
+                    // Return ExecutionResponse with Execution object as the first parameter
+                    return new Execution(executionData) {};
+
                 } else {
                     listener.getLogger().println("Response body is empty or null.");
                     return null;
@@ -313,6 +431,22 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
             }
         } catch (IOException | JSONException e) {
             listener.getLogger().println("Error during API call (POST): " + e.getMessage());
+            return null;
+        }
+    }
+
+    private IExecution createExecutionFromApiResponse(String responseBody) {
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            // Deserialize JSON into Execution object (which implements IExecution)
+            Execution execution = mapper.readValue(responseBody, Execution.class); // No need for casting
+            //            if (execution == null) {
+            //                listener.getLogger().println("Deserialization returned null.");
+            //            }
+            return execution; // Return Execution object directly, as it implements IExecution
+        } catch (JsonProcessingException e) {
+            //            listener.getLogger().println("Error during deserialization: " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
@@ -370,11 +504,12 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
     }
 
     // Helper class to encapsulate the response from the startPipelineExecution API
-    static class ExecutionResponse {
+    public static class ExecutionResponse {
         private final String projectId;
         private final String executionId;
 
         public ExecutionResponse(String projectId, String executionId) {
+
             this.projectId = projectId;
             this.executionId = executionId;
         }
@@ -555,7 +690,7 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
 
         @Override
         public String getDisplayName() {
-            return Messages.HelloWorldBuilder_DescriptorImpl_DisplayName();
+            return "Simplify3x";
         }
     }
 }
